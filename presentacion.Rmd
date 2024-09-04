@@ -1,0 +1,1291 @@
+---
+title: "Egresos del Sector Público"
+author: "Ignacio Campón"
+subtitle: "Series Cronológicas"
+lang: es
+bibliography: references.bib  
+output: 
+  beamer_presentation:
+    keep_tex: true
+    latex_engine: xelatex
+    pandoc_args:
+      - "--pdf-engine=xelatex"
+      - "-V"
+      - "linkcolor:blue"
+      - "-V"
+      - "urlcolor:blue"
+      - "-V"
+      - "citecolor:blue"
+date: "2024-07-05"
+editor_options: 
+  markdown: 
+    wrap: 72
+nocite: |
+  @MEFUruguay
+  @box1994time
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+```
+
+```{r librerias, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(readxl)
+library(ggplot2)
+library(xtable)
+library(tidyverse)
+library(here)
+library(forecast)
+library(tsoutliers)
+library(forecast)
+library(gridExtra)
+library(urca)
+library(lmtest)
+
+```
+
+```{r load_data, eval=TRUE, echo=FALSE,  fig.pos="h", fig.cap="", message=FALSE, results='asis'}
+
+# serie de GASTO PUBLICO mensual
+gasto_publico <- read_xlsx(here("proyecto_final", "datos", "series.xlsx"), sheet = "Gasto Sector Público") %>% as.data.frame()
+
+gasto <- ts(gasto_publico$Gasto, start = c(1999, 1), frequency = 12)
+
+n <- length(gasto)
+
+# se agregan los dias de turismo almacenados en el siguiente xlsx.
+pib_turismo <- read_xlsx(here("proyecto_final", "datos", "IVF_PIB_1990_2023.xlsx")) %>% 
+  rename("Fecha" = `...1`,
+         "PIB" = IVF_PIB_UY_T) %>% 
+  select(Fecha, PIB, Turismo)
+
+# seleccionaron observaciones 37 en adelante
+pib_turismo <- pib_turismo[37:nrow(pib_turismo),]
+pib_turismo$Fecha <- date(pib_turismo$Fecha)
+
+# crear vector para almacenar los días de turismo por mes (enero 1999 a diciembre 2023)
+turismo_mensual <- rep(0, 300)
+
+# llenar el vector con los valores de días de turismo
+for (i in 1:nrow(pib_turismo)) {
+  trimestre <- pib_turismo$Fecha[i]
+  dias_turismo <- pib_turismo$Turismo[i]
+  
+  # obtener el mes y el año de la fecha
+  mes <- month(trimestre)
+  año <- year(trimestre)
+  
+  # asignar los días de turismo al mes correspondiente
+  if (mes == 3) {
+    turismo_mensual[(año - 1999) * 12 + 3] <- turismo_mensual[(año - 1999) * 12 + 3] + dias_turismo
+  } else if (mes == 6) {
+    turismo_mensual[(año - 1999) * 12 + 4] <- turismo_mensual[(año - 1999) * 12 + 4] + dias_turismo
+  } else if (mes == 9) {
+    turismo_mensual[(año - 1999) * 12 + 9] <- turismo_mensual[(año - 1999) * 12 + 9] + dias_turismo
+  } else if (mes == 12) {
+    turismo_mensual[(año - 1999) * 12 + 12] <- turismo_mensual[(año - 1999) * 12 + 12] + dias_turismo
+  }
+}
+
+# dado que la serie IVF_PIB va hasta dic-23, se agregan los días de turismo de enero a abril de 2024
+
+turismo <- c(turismo_mensual,0,0,7,0)
+#length(turismo_mensual) == n
+
+```
+
+
+## Introduccion
+
+Los **Egresos Primarios del Sector Público no Monetario**, son una fuente crucial de información proporcionada por el [Ministerio de Economía y Finanzas](https://www.gub.uy/ministerio-economia-finanzas/datos-y-estadisticas/estadisticas/informacion-resultados-del-sector-publico). Esta serie mensual, ofrece una panorámica detallada de los desembolsos financieros del sector público, a lo largo del tiempo.
+
+Los egresos primarios del sector público son fundamentales para entender
+la dinámica fiscal de un país, ya que representan los gastos esenciales
+en bienes y servicios no financieros realizados por el gobierno. Estos
+datos son vitales para analizar la gestión presupuestaria, evaluar
+políticas económicas y anticipar tendencias futuras en base a modelos
+estadísticos. 
+
+Se explorará la serie temporal con el
+objetivo de identificar un modelo adecuado que permita reproducirl, facilitando así la capacidad predictiva sobre los egresos del
+sector público en Uruguay.
+
+## Serie temporal: Gasto Público
+
+```{r plot_series_inicial, echo=FALSE, out.width="85%", fig.align ="center", fig.pos="H", fig.cap = "\\label{gasto_publico} Evolución del Gasto Público mensual en millones de pesos corrientes entre enero 1999 y abril 2024.", results='asis'}
+
+# graficamos la serie del gasto mensual
+autoplot(gasto) +
+  labs(x = "Fecha",
+       y = "Gasto Público (millones de pesos corrientes) ") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+## Análisis descriptivo
+
+```{r month_plot, fig.align = 'center', echo=FALSE, out.width="85%", fig.cap = "\\label{month_plot} Comportamiento mensual del Gasto Público entre 1999 y 2024.", fig.pos = 'H'}
+
+# observamos el comportamiento mensual de la serie, para obsrvar la existencia o ausencia de componente estacional
+
+ggmonthplot(gasto) +
+  labs(x = "Meses",
+       y = "Gasto Público (millones de pesos corrientes) ")
+
+```
+
+## Análisis descriptivo (2)
+
+```{r season_plot, echo = F, fig.align = 'center',out.width="85%", fig.cap = "\\label{seasonal_plot} Comportamiento por año del Gasto Público entre 1999 y 2024.", fig.pos = 'H'}
+
+# La función ggseasonplot() permite comparar el comportamiento por año de una serie y
+# advertir tendencias, estacionalidad, etc.
+ggseasonplot(gasto) +
+  labs(color = "Año",
+       x = "Mes",
+       y = "Gasto Público (millones de pesos corrientes)",
+       title = "Gasto Público por año")
+
+```
+
+## Metodología {#metodologia}
+
+El desarrollo esta basado en la metodología de Box y Jenkins, en la construcción de modelos ARIMA para el análisis de series de tiempo. Podemos dividir esta metodología en cuatro grandes etapas:
+
+  - identificación
+  
+  - estimación
+  
+  - diagnostico
+  
+  - predicción
+
+
+
+## Metodología (2)
+
+La identificación del modelo, esta basada en las funciones de autocorrelación y autocorrelación parcial y a partir de ello, podremos obtener diferentes modelos candidatos. Tras la estimación, un diagnostico con determinadas etapas es realizado; y por último, aplicaremos predicciones sobre los mismos y se evaluará su desempeño.
+
+## Logaritmo de la serie
+
+```{r log_plot, fig.align = 'center', fig.align = 'center', out.width="85%" , fig.cap = "\\label{log_plot} Evolución del logaritmo del Gasto Público mensual entre 1999 y 2024.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Aplicamos el logaritmo a la serie original
+lgasto <- log(gasto)
+
+# Volvemos a graficar la serie
+autoplot(lgasto) +
+  labs(x = "Año",
+       y = "Logaritmo del Gasto Público") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+## Funciones de Autocorrelación
+
+```{r, fig.align = 'center', fig.align = 'center', out.width="85%", fig.cap = "\\label{fac_facp} Funciones de Autocorrelación y Autocorrelación Parcial estimadas del logaritmo del Gasto Público.", fig.pos = 'H'}
+
+# FAC
+# La serie no es estacionaria
+lgasto_acf <- ggAcf(lgasto, lag.max = 36, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+lgasto_pacf <- ggAcf(lgasto, lag.max = 36, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(lgasto_acf, lgasto_pacf)
+
+```
+
+## Test de Dickey-Fuller
+
+Este test contrasta en su hipótesis nula que el proceso contiene una raíz
+unitaria y por lo tanto que es no estacionario, mientras que
+la alternativa es que no presenta raíz unitaria y por lo tanto, se
+cumple el supuesto de estacionariedad. 
+
+La siguiente ecuación es la regresión auxiliar con tendencia determínistica para la solución paramétrica de DF (1979):
+
+$$ \Delta Y_t = a_0 + a_2 t + \gamma Y_{t-1} + \sum_{j=1}^{k} \beta_j \Delta Y_{t-j} + \epsilon_t $$ 
+donde $Y_t$ es la serie de tiempo, $t$ es el tiempo, $\Delta$ es el
+operador de diferencia, $a_0$ y $a_2$ son los coeficientes de la
+regresión, $\gamma$ es el coeficiente de la raíz unitaria, $\beta_j$ son
+los coeficientes de los rezagos y $\epsilon_t$ es el término de error.
+
+## Test de Dickey-Fuller (2)
+
+Los contrastes de hipótesis que se realizan son los siguientes tres:
+
+  * Estadístico de prueba, $\tau_3$ contrasta la hipótesis nula de que hay raíz unitaria, contra la alternativa de que no hay raíz unitaria, es decir es un proceso estacionario.
+
+\begin{align*}
+& \mathbf{H_0} : \gamma = 0 \\
+& \mathbf{H_1} : \gamma < 1
+\end{align*}
+
+  * Estadístico de prueba, $\phi_2$ contrasta la hipótesis nula de que no tiene raíz unitaria, constante ni tendencia, contra la alternativa de que una de ellas es distinta de 0.
+  
+\begin{align*}
+& \mathbf{H_0} : \gamma = a_0 = a_2 = 0 \\
+& \mathbf{H_1} : \text{Al menos uno de ellos es distinto de 0.}
+\end{align*}
+
+
+## Test de Dickey-Fuller (3)
+
+  * Estadístico de prueba, $\phi_3$ contrasta la hipótesis nula de que no tiene raíz unitaria ni tendencia, contra la alternativa de que una de ellas es distinta de 0.
+  
+\begin{align*}
+& \mathbf{H_0} : \gamma = a_2 = 0 \\
+& \mathbf{H_1} : \text{Al menos uno de ellos es distinto de 0.}
+\end{align*}
+
+El estadístico $\tau_3$  bajo la hipótesis nula sigue una distribución t-Student, mientras que los estadísticos $\phi_2$ y $\phi_3$ de prueba conjunta siguen una distribución F de Fisher.
+
+
+## Test de Dickey-Fuller (4)
+
+Se aplica el test de Dickey-Fuller sobre el logarítmo del gasto público. El test con tendencia y 12 rézagos significativos obtuvo los siguientes resultados para un nivel de significación al 5%. El estadístico $\tau_3 = -2.33$ y un $p-valor=-3.42$, no se rechaza $H_0$ y por lo tanto la serie tiene una raíz unitaria. Luego, $\phi_2 = 20.29$ y un $p-valor=4.71$, se rechaza $H_0$, por lo tanto al menos uno de $\gamma = a_0 = a_2$ es distinto de 0, es decir o presenta constante, o presenta tendencia, porque ya se constrasto que $\gamma = 0$. Por último, $\phi_3 = 3.13$ y un $p-valor=6.30$, no se rechaza $H_0$, entonces $\gamma$ o $a_0$ es distinto de 0.
+
+Por lo tanto, dado los 3 contrastes se concluye que la serie tiene raíz unitaria, no tiene tendencia y presenta constante. Esto sugiere que la serie no es estacionaria y se debe de aplicar una diferencia regular para obtener un proceso estacionario.
+
+## Diferencia regular
+
+$$(1-L)Ln(gasto)$$
+```{r, fig.align = 'center', out.width="75%", fig.cap = "\\label{diff_plot} Evolución de la primera diferencia regular del logaritmo del Gasto Público mensual entre 1999 y 2024.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Diferenciamos la serie original (primera diferencia regular)
+dgasto <- diff(lgasto)
+
+# Volvemos a graficar la serie
+autoplot(dgasto) +
+  labs(x = "Año",
+       y = "Logarítmo del Gasto Público diferenciado") +
+  theme(panel.grid.minor = element_blank())
+
+```
+
+## Funciones de Autocorrelación serie diferenciada
+
+```{r, fig.align = 'center', out.width="85%" , fig.cap = "\\label{fac_facp_diff} Funciones de Autocorrelación y Autocorrelación Parcial estimadas para la primera diferencia regular del logaritmo del Gasto Público.", fig.pos = 'H'}
+
+# FAC
+dgasto_acf <- ggAcf(dgasto, lag.max = 48, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+dgasto_pacf <- ggAcf(dgasto, lag.max = 48, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(dgasto_acf, dgasto_pacf)
+
+```
+
+## Diferencia estacional
+
+$$(1-L^{12}) Ln(gasto)$$
+
+```{r, fig.align = 'center', out.width="70%", fig.cap = "\\label{fac_facp_estac} Funciones de Autocorrelación y Autocorrelación Parcial estimadas para la primera diferencia estacional del logaritmo del Gasto Público (1999-2024).", fig.pos = 'H'}
+
+# Diferenciamos la serie original (primera diferencia estacional)
+d4gasto <- diff(lgasto, lag = 12)
+# sd(d4gasto)
+
+# FAC
+d4gasto_acf <- ggAcf(d4gasto, lag.max = 36, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+d4gasto_pacf <- ggAcf(d4gasto, lag.max = 36, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(d4gasto_acf, d4gasto_pacf)
+
+```
+
+## Identificación
+
+Se identifican dos modelos posibles, **SARIMA(0,0,1)(0,1,1)** y **SARIMA(0,0,1)(1,1,0)**.
+
+Estos modelos surgen de los rezagos significativos presentes en las funciones. Con respecto a la parte regular de modelo, se puede observar una rápida convergencia de la serie en la FAC, mientras que en la FACP dicha convergencia no es tan rápida, lo cual sugiere un modelo que contiene solo parte MA; el rezago 1 significativo de la FAC sugiere $q=1$ y $p=d=0$ en un modelo SARIMA(p,d,q)(P,D,Q). Con respecto a la parte estacional, los rezagos múltiplos de 12 son los relevantes en la FAC y FACP, ambas funciones presentan el primer rezago (rezago 12) significativo, y una convergencia medianamente rápida. Esto sugiere probar dos posibilidades $P=1$ o $Q=1$ siendo $D=1$.
+
+## Diferencia regular y estacional
+
+$$(1-L)(1-L^{12}) Ln(gasto)$$
+
+```{r, fig.align = 'center', out.width="70%", fig.cap = "\\label{dd_fac_facp} Funciones de Autocorrelación y Autocorrelación Parcial estimadas para la primera diferencia regular de la primera diferencia estacional del logaritmo del Gasto Público.", fig.pos = 'H'}
+
+# Diferenciamos la serie original (primera diferencia estacional)
+ddgasto <- diff(d4gasto, lag = 1)
+# sd(ddgasto)
+
+# FAC
+ddgasto_acf <- ggAcf(ddgasto, lag.max = 36, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+# FACP
+ddgasto_pacf <- ggAcf(ddgasto, lag.max = 36, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+grid.arrange(ddgasto_acf, ddgasto_pacf)
+
+```
+
+## Identificación (2)
+
+La convergencia de las funciones es mas consistente que en la serie con diferencia estacional únicamente. A partir de estas funciones se identifican 2 modelos adicionales, **SARIMA(0,1,2)(1,1,0)** y **SARIMA(0,1,1)(0,1,1)**.
+
+En este caso al haber ambas diferencias los parámetros $d=1$ y $D=1$ son fijos. Con respecto a la parte regular, la FACP presenta los primeros tres rezagos significativos, sin embargo se descarta un modelo con parte AR de orden tan grande dado que la FAC no presenta un ruido tan grande; de haber parte AR, la FAC no presentaria una convergencia tan rápida como tiene a partir del rezago 2. En cambio, la convergencia de la FACP es más lenta, lo cual sugiere un modelo con parte MA de orden 1 e incluso 2, por lo tanto $q={1,2}$. Con respecto a la parte estacional, las conclusiones son las mismas a la de la figura \ref{fac_facp_estac}, la FAC y la FACP presenta el primer rezago significativo dando lugar a dos posibilidades $P=1$ o $Q=1$. 
+
+## Variables regresoras
+
+La etapa de identificación ha identificado 4 modelos posibles para modelar la serie de Gasto Público. Estos modelos son en esta parte estimados y comparados. Adicionalmente es incorporada al modelo una variable regresora, los días de turismo, con el objetivo de capturar la variabilidad de la serie generada en los marzos y abril de cada año, que coincidie con el pago de los aguinaldos de los empleados públicos. La figura \ref{gasto_2009-2013} representa la evolución del logaritmo del Gasto Público entre enero 2009 y diciembre 2012, con las líneas verticales punteadas marcando los meses de marzo y abril de cada año.
+
+## Variable regresora: turismo
+
+```{r gasto_2009-2012, fig.align = 'center', out.width="85%", fig.cap = "\\label{gasto_2009-2013} Evolución del Logarítmo del Gasto Público mensual entre enero 2009 y diciembre 2012.", fig.pos = 'H'}
+
+gasto_publico$Fecha <- as.Date(gasto_publico$Fecha, format = "%b. %Y")
+#gasto_publico$Gastos <- log(gasto_publico$Gastos)
+#gasto_publico[157:205,]
+
+# Graficar la serie de tiempo
+ggplot(gasto_publico[121:168,], aes(x = Fecha, y = log(Gastos))) +
+  geom_line() +
+  labs(x = "Fecha", y = "Logarítmo Gasto Público") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotar etiquetas del eje x
+  geom_vline(xintercept = as.numeric(as.Date(paste0(year(gasto_publico$Fecha), "-03-01"))), linetype = "dashed") +  # Linea punteada en marzo
+  geom_vline(xintercept = as.numeric(as.Date(paste0(year(gasto_publico$Fecha), "-04-01"))), linetype = "dashed") +  # Linea punteada en abril
+  scale_x_date(date_breaks = "1 year", date_labels = "%b %Y")  # Mostrar etiquetas anuales en el eje x
+
+#turismo[121:168]
+
+```
+
+## Variable regresora: turismo
+
+Dependiendo de cuando caen los días de turismo, determina el mes en el que se efectuará el pago de los aguinaldos de los empleados públicos. Esto puede generar un pago anticipado de los aguinaldos en determinado mes, generando un alto gasto, y un gasto mucho menor al mes siguiente. El cuadro \ref{tab:turismo} muestra los dias de turismo de cada año entre 2009-2012:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{c c c c c}
+\hline
+ & 2009 & 2010 & 2011 & 2012 \\ \hline
+Marzo & 0 & 3 & 0 & 0 \\ 
+Abril & 7 & 4 & 7 & 7 \\ \hline
+\end{tabular}
+\caption{Días de tursimo en marzo y abril de 2009 a 2012.}
+\label{tab:turismo}
+\end{table}
+
+
+## Estimación
+
+```{r estimacion, include=FALSE}
+
+# Probamos los modelos: SARIMA(0,0,1)(0,1,1) o SARIMA(0,0,1)(1,1,0) y SARIMA(0,1,2)(1,1,0) o SARIMA(0,1,1)(0,1,1) (aerolineas)
+
+# son los anteriores los modelos a probar
+
+# SARIMA(0,0,1)(0,1,1)
+modelo1 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 0, 1), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = turismo,
+                 biasadj = TRUE)
+coeftest(modelo1) # MA 1, no significativo
+modelo1$sigma2 # 0.04937154
+
+# SARIMA(0,0,1)(1,1,0) 
+modelo2 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 0, 1), # Orden del modelo
+                 seasonal = c(1, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = turismo,
+                 biasadj = TRUE)
+coeftest(modelo2) # MA 1, no significativo
+modelo2$sigma2 # 0.0484153
+
+# SARIMA(0,1,2)(1,1,0)
+modelo3 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 1, 2), # Orden del modelo
+                 seasonal = c(1, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = turismo,
+                 biasadj = TRUE)
+coeftest(modelo3) # todo significativo
+modelo3$sigma2 # 0.0240712
+
+# SARIMA(0,1,1)(0,1,1)
+modelo4 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 1, 1), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = turismo,
+                 biasadj = TRUE)
+coeftest(modelo4) # todo significativo
+modelo4$sigma2 # 0.02718717
+
+```
+
+El cuadro \ref{tab:models}, es un resúmen de la estimación de los 4 modelos SARIMA identificados, proporciona la varianza del modelo y la significancia de sus componentes.
+
+\begin{table}[H]
+\centering
+\resizebox{1\textwidth}{!}{
+  \begin{tabular}{c c c c}
+  \hline
+  Modelo & SARIMA(p,d,q)(P,D,Q) + turismo & $\sigma^2$ & Significancia de los componentes \\ \hline
+  1 & (0,0,1)(0,1,1) & 0.0493 & MA 1 no significativo \\ 
+  2 & (0,0,1)(1,1,0) & 0.0484 & MA 1 no significativo \\ 
+  3 & (0,1,2)(1,1,0) & 0.0240 & Todos significativos \\ 
+  4 & (0,1,1)(0,1,1) & 0.0271 & Todos significativos \\ \hline
+  \end{tabular}
+}
+\caption{Estimación de modelos SARIMA.}
+\label{tab:models}
+\end{table}
+
+Los dos modelos que incluyen únicamente la diferencia estacional, aparentan ser peores que los modelos con diferencias regular y estacional en términos de varianza del modelo, a su vez el componente MA de orden 1 en la parte regular de los dos primeros modelos, suele ser rechazada al 5% de nivel de significación.  
+
+## Diagnóstico
+
+En esta etapa, los 4 modelos estimados son diagnosticados para verificar si cumplen con los supuestos de ruido blanco es decir incorrelación y normalidad de los resiudos. 
+
+El análisis de las funciones de autocorrelación y autocorrelación parcial de los residuos permite observar la autocorrelación de los mismos, y acompañado del test de Ljung-Box, se verifica la incorrelación.
+
+Por otro lado los tests de Shapiro-Wilks y Jarque-Bera, permiten verificar la normalidad de los residuos.
+
+
+## Diagnóstico: Residuos y residuos estandarizados
+
+```{r residos, include=FALSE}
+
+# Guardamos los residuos del modelo
+
+# Residuos
+residuos1 <- modelo1$residuals
+
+# Residuos estandarizados
+residuos1_est <- residuos1/sqrt(modelo1$sigma2)
+
+gasto_publico[abs(residuos1_est)>3,] # obs que superan los 3 desvios estandar
+
+
+# Buscamos el residuo máximo
+max(abs(residuos1))
+time(residuos1)[which.max(abs(residuos1))] # 2021.167
+
+max(abs(residuos1_est))
+time(residuos1_est)[which.max(abs(residuos1_est))] # 2021.167
+
+
+residuos2 <- modelo2$residuals
+
+residuos2_est <- residuos2/sqrt(modelo2$sigma2)
+
+
+residuos3 <- modelo3$residuals
+
+residuos3_est <- residuos3/sqrt(modelo3$sigma2)
+
+
+residuos4 <- modelo4$residuals
+
+residuos4_est <- residuos4/sqrt(modelo4$sigma2)
+
+```
+
+```{r residos_graf, include=FALSE}
+
+# Graficamos los residuos
+grafico_residuos <- residuos1 %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est <- residuos1_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grafico_residuos2 <- residuos2 %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est2 <- residuos2_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grafico_residuos3 <- residuos3 %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est3 <- residuos3_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+grafico_residuos4 <- residuos4 %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est4 <- residuos4_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+```
+
+```{r, fig.align = 'center', out.width="75%", fig.cap = "\\label{residuos3} Residuos normales y estandarizados de un modelo SARIMA(0,1,2)(1,1,0) para el logaritmo del Gasto Público.", fig.pos = 'H'}
+grid.arrange(grafico_residuos3, grafico_residuos_est3)
+```
+
+
+## Diagnóstico:Función de autocorrelación y autocorrelación parcial de los residuos
+
+```{r, incude=FALSE}
+
+residuos1_acf <- ggAcf(residuos1, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+# FACP
+residuos1_pacf <- ggAcf(residuos1, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+
+
+residuos2_acf <- ggAcf(residuos2, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+residuos2_pacf <- ggAcf(residuos2, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+
+
+residuos3_acf <- ggAcf(residuos3, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+residuos3_pacf <- ggAcf(residuos3, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+
+
+residuos4_acf <- ggAcf(residuos4, lag.max = 24, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+residuos4_pacf <- ggAcf(residuos4, lag.max = 24, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+```
+
+```{r, fig.align = 'center', out.width="75%", fig.cap = "\\label{facyp_r3} Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo SARIMA(0,1,2)(1,1,0) para el logaritmo del Gasto Público.", fig.pos = 'H'}
+grid.arrange(residuos3_acf, residuos3_pacf)
+```
+
+## Diagnóstico: Tests de Ljung-Box y Shapiro-Wilks
+
+```{r, include=FALSE}
+
+# Test de Ljung-Box
+Box.test(residuos1,
+         lag = 25,
+         type = "Ljung-Box")
+
+Box.test(residuos2,
+         lag = 25,
+         type = "Ljung-Box")
+
+Box.test(residuos3,
+         lag = 25,
+         type = "Ljung-Box")
+
+Box.test(residuos4,
+         lag = 25,
+         type = "Ljung-Box")
+
+```
+
+```{r, include=FALSE}
+
+# Tests de Shapiro y Jarque-Bera
+
+shapiro.test(residuos1)
+#JarqueBera.test(residuos1)
+
+shapiro.test(residuos2)
+#JarqueBera.test(residuos2)
+
+shapiro.test(residuos3)
+#JarqueBera.test(residuos3)
+
+shapiro.test(residuos4)
+#JarqueBera.test(residuos4)
+
+```
+
+Veánse los resultados de la incorrelación y normalidad de los residuos en el cuadro \ref{tab:diagnostico}.
+
+\begin{table}[H]
+\centering
+\resizebox{1\textwidth}{!}{
+  \begin{tabular}{c c c c}
+  \hline
+  Modelo & SARIMA(p,d,q)(P,D,Q) + turismo & Incorrelación & Normalidad \\ \hline
+  1 & (0,0,1)(0,1,1) & No & No \\ 
+  2 & (0,0,1)(1,1,0) & No & No \\ 
+  3 & (0,1,2)(1,1,0) & No & No \\ 
+  4 & (0,1,1)(0,1,1) & No & No \\ \hline
+  \end{tabular}
+}
+\caption{Diagnostico de modelos SARIMA.}
+\label{tab:diagnostico}
+\end{table}
+
+## Diagnóstico: Detección de outliers
+
+```{r, include=FALSE}
+
+# Probamos una función de detección automática de outliers
+outliers1 <- tso(lgasto, tsmethod = "arima",
+                 args.tsmethod = list(order = c(0, 0, 1),
+                                      seasonal = list(order = c(0, 1, 1))),
+                 xreg = turismo)
+#outliers1
+
+# Graficamos el efecto de los outliers
+#plot.tsoutliers(outliers1)
+
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg1 <- outliers.effects(outliers1$outliers, length(lgasto))
+#head(xreg1)
+
+
+
+# Probamos una función de detección automática de outliers
+outliers2 <- tso(lgasto, tsmethod = "arima",
+                 args.tsmethod = list(order = c(0, 0, 1),
+                                      seasonal = list(order = c(1, 1, 0))),
+                 xreg = turismo)
+#outliers2
+
+# Graficamos el efecto de los outliers
+#plot.tsoutliers(outliers2)
+
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg2 <- outliers.effects(outliers2$outliers, length(lgasto))
+
+
+
+# Probamos una función de detección automática de outliers
+outliers3 <- tso(lgasto, tsmethod = "arima",
+                 args.tsmethod = list(order = c(0, 1, 2),
+                                      seasonal = list(order = c(1, 1, 0))),
+                 xreg = turismo)
+#outliers3
+
+# Graficamos el efecto de los outliers
+#plot.tsoutliers(outliers3)
+
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg3 <- outliers.effects(outliers3$outliers, length(lgasto))
+
+
+
+# Probamos una función de detección automática de outliers
+outliers4 <- tso(lgasto, tsmethod = "arima",
+                 args.tsmethod = list(order = c(0, 1, 1),
+                                      seasonal = list(order = c(0, 1, 1))),
+                 xreg = turismo)
+#outliers4
+
+# Graficamos el efecto de los outliers
+#plot.tsoutliers(outliers4)
+
+# Obtenemos la indicatriz para incluir como regresor externo
+xreg4 <- outliers.effects(outliers4$outliers, length(lgasto))
+
+```
+
+Los outliers detectados para cada modelo son las siguientes observaciones:
+  
+  * Modelo 1 
+    - AO: 51, 100, 136, 160, 195, 255, 267, 280, 304.
+    - LS: 117, 159.
+    - TC: 254
+
+  * Modelo 2
+    - AO: 51, 100, 136, 160, 195, 255, 267, 280, 304.
+    - TC: 159, 254, 291.
+
+  * Modelo 3
+    - AO: 100, 160, 292.
+
+  * Modelo 4
+    - AO: 51, 100, 136, 160, 195, 255, 268, 279, 292.
+
+## Reestimación
+
+```{r, include=FALSE}
+
+# Reestimamos los modelos
+
+# SARIMA(0,0,1)(0,1,1)
+modelo1 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 0, 1), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo, xreg1),
+                 biasadj = TRUE)
+coeftest(modelo1)
+modelo1$sigma2
+
+# SARIMA(0,0,1)(1,1,10)
+modelo2 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 0, 1), # Orden del modelo
+                 seasonal = c(1, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo, xreg2),
+                 biasadj = TRUE)
+coeftest(modelo2)
+modelo2$sigma2
+
+# SARIMA(0,1,2)(0,1,1)
+modelo3 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 1, 2), # Orden del modelo
+                 seasonal = c(1, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo, xreg3),
+                 biasadj = TRUE)
+coeftest(modelo3)
+modelo3$sigma2
+
+# SARIMA(0,1,1)(1,1,0)
+modelo4 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 1, 1), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo, xreg4),
+                 biasadj = TRUE)
+coeftest(modelo4)
+modelo4$sigma2
+```
+
+\begin{table}[H]
+\centering
+\resizebox{1\textwidth}{!}{
+  \begin{tabular}{c c c c}
+  \hline
+  Modelo & SARIMA(p,d,q)(P,D,Q) + turismo + outliers & $\sigma^2$ & Significancia de los componentes \\ \hline
+  1 & (0,0,1)(0,1,1) & 0.0227 & s\_MA 1 no significativo \\ 
+  2 & (0,0,1)(1,1,0) & 0.0226 & Todos significativos \\ 
+  3 & (0,1,2)(1,1,0) & 0.0205 & Regresor turismo no significativo \\ 
+  4 & (0,1,1)(0,1,1) & 0.0156 & Todos significativos \\ \hline
+  \end{tabular}
+}
+\caption{Reestimación de modelos SARIMA con intervención de outliers.}
+\label{tab:models2}
+\end{table}
+
+## Reestimación (2)
+
+```{r, include=FALSE}
+
+# Reestimamos los modelos
+
+# SARIMA(0,0,1)(0,1,0)
+modelo1 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 0, 1), # Orden del modelo
+                 seasonal = c(0, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo, xreg1),
+                 biasadj = TRUE)
+coeftest(modelo1)
+modelo1$sigma2
+
+# SARIMA(0,1,2)(0,1,1)
+modelo3 <- Arima(y = gasto, # Datos para estimar
+                 order = c(0, 1, 2), # Orden del modelo
+                 seasonal = c(1, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(xreg3),
+                 biasadj = TRUE)
+coeftest(modelo3)
+modelo3$sigma2
+
+```
+
+\begin{table}[H]
+\centering
+\resizebox{1\textwidth}{!}{
+  \begin{tabular}{c c c c}
+  \hline
+  Modelo & SARIMA(p,d,q)(P,D,Q) + outliers & $\sigma^2$ & Significancia de los componentes \\ \hline
+  1 & (0,0,1)(0,1,0) + turismo & 0.0226 & Todos significativos \\ 
+  3 & (0,1,2)(1,1,0) & 0.0205 & Todos significativos \\ \hline
+  \end{tabular}
+}
+\caption{Reestimación de modelos SARIMA con intervención de outliers.}
+\label{tab:models3}
+\end{table}
+
+
+## Diagnóstico: Residuos y residuos estandarizados
+
+```{r, include=FALSE}
+
+# Guardamos los residuos del modelo
+
+residuos1 <- modelo1$residuals
+
+residuos1_est <- residuos1/sqrt(modelo1$sigma2)
+
+
+residuos2 <- modelo2$residuals
+
+residuos2_est <- residuos2/sqrt(modelo2$sigma2)
+
+
+residuos3 <- modelo3$residuals
+
+residuos3_est <- residuos3/sqrt(modelo3$sigma2)
+
+
+residuos4 <- modelo4$residuals
+
+residuos4_est <- residuos4/sqrt(modelo4$sigma2)
+
+grafico_residuos4 <- residuos4 %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos") +
+  geom_hline(yintercept = 0, color = "red")
+
+grafico_residuos_est4 <- residuos4_est %>% autoplot() +
+  labs(x = "Fecha",
+       y = "Residuos estandarizados") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = 3, color = "red", linetype = "dotted") +
+  geom_hline(yintercept = -3, color = "red", linetype = "dotted")
+
+residuos4_acf <- ggAcf(residuos4, lag.max = 36, type = "correlation") +
+  labs(x = "Rezago",
+       y = "Autocorrelación",
+       title = "")
+
+residuos4_pacf <- ggAcf(residuos4, lag.max = 36, type = "partial") +
+  labs(x = "Rezago",
+       y = "Autocorrelación parcial",
+       title = "")
+
+```
+
+```{r, fig.align = 'center', out.width="85%", fig.cap = "\\label{residuos4} Residuos normales y estandarizados de un modelo SARIMA(0,1,1)(0,1,1) intervenido para el logaritmo del Gasto Público.", fig.pos = 'H'}
+grid.arrange(grafico_residuos4, grafico_residuos_est4)
+```
+
+
+
+## Diagnostico: Función de autocorrelación y autocorrelación parcial de los residuos
+
+```{r, fig.align = 'center', out.width="75%", fig.cap = "\\label{facyp_r4} Funciones de Autocorrelación y Autocorrelación Parcial estimadas de los residuos de un modelo SARIMA(0,1,1)(0,1,1) intervenido para el logaritmo del Gasto Público.", fig.pos = 'H'}
+grid.arrange(residuos4_acf, residuos4_pacf)
+```
+
+## Diagnostico: Tests de Ljung-Box y Shapiro-Wilks
+
+```{r, include=FALSE}
+
+# Test de Ljung-Box
+Box.test(residuos1,
+         lag = 36,
+         type = "Ljung-Box")
+
+Box.test(residuos2,
+         lag = 36,
+         type = "Ljung-Box")
+
+Box.test(residuos3,
+         lag = 36,
+         type = "Ljung-Box")
+
+Box.test(residuos4,
+         lag = 36,
+         type = "Ljung-Box")
+
+```
+
+```{r, include=FALSE}
+
+# Tests de Shapiro y Jarque-Bera
+
+shapiro.test(residuos1)
+#JarqueBera.test(residuos1)
+
+shapiro.test(residuos2)
+#JarqueBera.test(residuos2)
+
+shapiro.test(residuos3)
+#JarqueBera.test(residuos3)
+
+shapiro.test(residuos4)
+#JarqueBera.test(residuos4)
+
+
+# plots
+n1 <- ggplot(data = residuos1) +
+  geom_histogram(aes(x = residuos1,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos1),
+                            sd = sd(residuos1)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos modelo 1",
+       y = "Densidad")
+
+n2 <- ggplot(data = residuos2) +
+  geom_histogram(aes(x = residuos2,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos2),
+                            sd = sd(residuos2)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos modelo 2",
+       y = "Densidad")
+
+n3 <- ggplot(data = residuos3) +
+  geom_histogram(aes(x = residuos3,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos3),
+                            sd = sd(residuos3)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos modelo 3",
+       y = "Densidad")
+
+
+n4 <- ggplot(data = residuos4) +
+  geom_histogram(aes(x = residuos4,y = ..density..)) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residuos4),
+                            sd = sd(residuos4)),
+                col = "red",
+                size = 1) +
+  labs(x = "Residuos modelo 4",
+       y = "Densidad")
+
+```
+
+\begin{table}[H]
+\centering
+\resizebox{1\textwidth}{!}{
+\begin{tabular}{c c c c}
+\hline
+Modelo & SARIMA(p,d,q)(P,D,Q) + outliers & Incorrelación & Normalidad \\ \hline
+1 & (0,0,1)(0,1,0) + tursimo & No & No \\ 
+2 & (0,0,1)(1,1,0) + turismo & No & No \\ 
+3 & (0,1,2)(1,1,0) & No & No \\ 
+4 & (0,1,1)(0,1,1) + turismo & No & No \\ \hline
+\end{tabular}
+}
+\caption{Diagnosticos de modelos SARIMA.}
+\label{tab:diagnostico2}
+\end{table}
+
+## Diagnóstico: Histograma de los residuos
+
+```{r, fig.align = 'center', out.width="80%", fig.cap = "\\label{norms} Histograma de los residuos de los modelos reestimados SARIMA intervenido spara el logaritmo del Gasto Público. La línea roja corresponde a una densidad normal con media y desvío muestrales igual al de los residuos.", fig.pos = 'H', warning = FALSE, message = FALSE}
+grid.arrange(n1,n2,n3,n4)
+```
+
+
+## Predicción
+
+Puntos a tener en cuenta:
+  
+  - Función de pérdida: simétrica. 
+
+- Horizonte de predicción: 12 meses.
+
+- Conjunto de entrenamiento: hasta abril de 2023.
+
+- Conjunto de testeo: desde mayo de 2023.
+
+- Variables exógenas: turismo y outliers.
+
+
+## Predicción (2)
+
+Las métricas de error que se utilizarán para comparar los modelos son:
+  
+  - Error absoluto medio (MAE): mide la magnitud absoluta promedio del desvío de la predicción del valor real.
+
+- Error porcentual absoluto medio (MAPE): mide la magnitud promedio del desvío de la predicción del valor real en términos porcentuales.
+
+- Error medio absoluto escalado (MASE): mide la magnitud promedio del desvío de la predicción del valor real, escalada por el MAE del conjunto de entrenamiento.
+
+Un valor más cercano a cero indica una mejor predicción para las tres métricas.
+
+## Predicción de los modelos 1 y 2
+
+```{r, include=FALSE}
+
+# Definimos una muestra de entrenamiento ("training set") hasta 2023 abril inclusive
+train_gasto <- window(gasto, end = c(2023,4))
+
+# Dejamos los datos de 2023 como conjunto de entrenamiento ("test set")
+test_gasto <- window(gasto, start = c(2023,5))
+n <- length(test_gasto)
+
+```
+
+```{r, include=FALSE}
+
+# Estimamos los modelos para el training set (series sin transformar)
+
+# SARIMA(0,0,1)(0,1,0)
+modelo1 <- Arima(y = train_gasto, # Datos para estimar
+                 order = c(0, 0, 1), # Orden del modelo
+                 seasonal = c(0, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo[1:length(train_gasto)], xreg1[1:length(train_gasto)]),
+                 biasadj = TRUE)
+coeftest(modelo1)
+modelo1$sigma2
+
+# SARIMA(0,0,1)(1,1,0)
+modelo2 <- Arima(y = train_gasto, # Datos para estimar
+                 order = c(0, 0, 1), # Orden del modelo
+                 seasonal = c(1, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo[1:length(train_gasto)], xreg2[1:length(train_gasto)]),
+                 biasadj = TRUE)
+coeftest(modelo2)
+modelo2$sigma2
+
+# SARIMA(0,1,2)(1,1,0)
+modelo3 <- Arima(y = train_gasto, # Datos para estimar
+                 order = c(0, 1, 2), # Orden del modelo
+                 seasonal = c(1, 1, 0), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(xreg3[1:length(train_gasto)]),
+                 biasadj = TRUE)
+coeftest(modelo3)
+modelo3$sigma2
+
+# SARIMA(0,1,1)(0,1,1)
+modelo4 <- Arima(y = train_gasto, # Datos para estimar
+                 order = c(0, 1, 1), # Orden del modelo
+                 seasonal = c(0, 1, 1), # Parte estacional
+                 lambda = 0, # Trabajamos con la serie en logaritmos
+                 method = "ML",
+                 xreg = cbind(turismo[1:length(train_gasto)], xreg4[1:length(train_gasto)]),
+                 biasadj = TRUE)
+coeftest(modelo4)
+modelo4$sigma2
+
+```
+
+```{r, include=FALSE}
+
+# Predecimos fuera de la muestra (el horizonte de predicción
+# será igual al largo del test set)
+
+# Modelo 1
+pred1_test <- forecast(modelo1, xreg=cbind(turismo[length(train_gasto):length(gasto)], xreg1[length(train_gasto):length(gasto)]), h = n)
+
+# Modelo 2
+pred2_test <- forecast(modelo2, xreg=cbind(turismo[length(train_gasto):length(gasto)], xreg2[length(train_gasto):length(gasto)]), h = n)
+
+# Modelo 3
+pred3_test <- forecast(modelo3, xreg=xreg3[length(train_gasto):length(gasto)], h = n)
+
+# Modelo 4
+pred4_test <- forecast(modelo4, xreg=cbind(turismo[length(train_gasto):length(gasto)], xreg4[length(train_gasto):length(gasto)]), h = n)
+
+```
+
+```{r, out.width="95%", fig.align = 'center', fig.cap = "\\label{pred12} Predicciones en el conjunto de prueba del Gasto Público, para los modelos 1 y 2 respectivamente. La línea azul corresponde a las predicciones y la negra a los datos reales. El azul mas claro correspode al intervalo de predicción al 95% de confianza y la mas oscura al 80.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+
+# Graficamos las predicciones obtenidas
+
+# Modelo 1
+grafico_pred1_test <- autoplot(pred1_test) +
+  autolayer(gasto, color = "black") +
+  labs(x = "Fecha",
+       y = "Gasto Público",
+       title = "") + xlim(c(2020, 2024))
+
+# Modelo 2
+
+grafico_pred2_test <- autoplot(pred2_test) +
+  autolayer(gasto, color = "black") +
+  labs(x = "Fecha",
+       y = "Gasto Público",
+       title = "") + xlim(c(2020, 2024))
+
+
+grid.arrange(grafico_pred1_test, grafico_pred2_test)
+
+
+```
+
+## Predicción de los modelos 3 y 4
+
+```{r, fig.align = 'center', out.width="95%", fig.cap = "\\label{pred34} Predicciones en el conjunto de prueba del Gasto Público, para los modelos 3 y 4 respectivamente. La línea azul corresponde a las predicciones y la negra a los datos reales. El azul mas claro correspode al intervalo de predicción al 95% de confianza y la mas oscura al 80.", fig.pos = 'H', warning = FALSE, message = FALSE}
+
+# Modelo 3
+grafico_pred3_test <- autoplot(pred3_test) +
+  autolayer(gasto, color = "black") +
+  labs(x = "Fecha",
+       y = "Gasto Público",
+       title = "") + xlim(c(2020, 2024))
+
+# Modelo 4
+
+grafico_pred4_test <- autoplot(pred4_test) +
+  autolayer(gasto, color = "black") +
+  labs(x = "Fecha",
+       y = "Gasto Público",
+       title = "") + xlim(c(2020, 2024))
+
+
+grid.arrange(grafico_pred3_test, grafico_pred4_test)
+
+
+```
+
+## Predicción: Métricas de error
+
+```{r, include=FALSE}
+
+# Obtenemos medidas de los errores de predicción fuera de la muestra
+# El segundo argumento de la función accuracy() corresponde al 
+# verdadero valor de la serie (conjunto de prueba)
+
+# Modelo 1
+accuracy(pred1_test, test_gasto)
+
+# Modelo 2
+accuracy(pred2_test, test_gasto)
+
+# Modelo 3
+accuracy(pred3_test, test_gasto)
+
+# Modelo 4
+accuracy(pred4_test, test_gasto)
+
+```
+
+\begin{table}[H]
+\centering
+\resizebox{1\textwidth}{!}{
+  \begin{tabular}{c c c c c c}
+  \hline
+  Modelo & Conjunto & MAE & MAPE & MASE \\ \hline
+  1 & Training  & 3541 & 12.85 & 0.868 \\ 
+  1 & Test      & 10870 & 13.98 & 2.664 \\ \hline
+  2 & Training  & 3565 & 13.10 & 0.874 \\ 
+  2 & Test      & 9909 & 12.84 & 2.429 \\ \hline
+  3 & Training  & 2757 & 10.92 & 0.676 \\ 
+  3 & Test      & 9333 & 12.45 & 2.288 \\ \hline
+  4 & Training  & 2729 & 10.87 & 0.669 \\ 
+  4 & Test      & 6829 & 8.93 & 1.674 \\ \hline
+  \end{tabular}
+}
+\caption{Resultados de error de predicción para los diferentes modelos.}
+\label{tab:metricas}
+\end{table}
+
+## Conclusiones
+
+En base a los resultados obtenidos, se puede concluir que el modelo 4 (entre los presentados) es el que presenta un mejor desempeño en los datos. Este modelo es un SARIMA(0,1,1)(0,1,1) con un regresor turismo y la inclusión de outliers detectados. 
+
+Se ha logrado llegar a resultados positivos, mas alla de la falta de cumplimiento de los supuestos de los residuos respecto a la incorrelación y normalidad de los residuos. Los puntos atípicos presentes en la serie, han sido correctamente identificados y tratados en los modelos, lo cual ha permitido mejorar la calidad de las estimaciones.
+
+## Comentarios Finales {#comentarios}
+
+Hubiese estado bueno que al identificar los outliers aparte de haber mejorado la estimación, hubiese ayudado al cumplimiento de la incorrelación y normalidad de los residuos.
+
+La predicción realizada en el conjunto de testeo, respondió correctamente, presentando un error de predicción dentro de las expectativas. El modelo 3 presenta una predicción rara de la primer observación que solo queda contenida en el intervalo de predicción al 95% de confianza, se desconoce el motivo de este comportamiento.
+
+A efectos futuros, se sugiere probar las siguientes combinaciones de modelos que quedaron pendientes de estimar y diagnosticar, SARIMA(p,d,q)(P,D,Q): 
+
+  - (0,1,2) (0,1,1) 
+  
+  - (0,1,1) (1,1,0)
+
+
+## Bibliografía
+
+<div id="refs"></div>
+
+
+## 
+
+\centering
+¡Muchas Gracias!
